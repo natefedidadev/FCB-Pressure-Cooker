@@ -11,7 +11,7 @@ HOW TO LOAD THE DATA
 
 from data_loader import MatchDataLoader
 
-# Set your local path to the data folder
+# Set your local path to the data folder, the path for the folder that then seperates between "masculí" and "femení"
 loader = MatchDataLoader(base_path="C:/Users/YourName/hackathon/data")
 
 # Load all matches (will take time first time, then cached)
