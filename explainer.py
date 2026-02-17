@@ -1,4 +1,7 @@
 import os
+import json
+import hashlib
+from pathlib import Path
 from openai import OpenAI
 
 # key
@@ -25,6 +28,42 @@ def call_llm(prompt: str, system_prompt: str | None = None) -> str:
 
     # response object has a `choices` list, each choice has a `message` (this is the LLM output)
     return response.choices[0].message.content
+
+# ---------------------------------------------------------------------------
+# Disk caching — never call the API twice for the same prompt
+# ---------------------------------------------------------------------------
+
+CACHE_DIR = Path("cache/explanations")
+
+def _cache_key(prompt: str, system_prompt: str | None) -> str:
+    """Hash the prompt into a short filename-safe key."""
+    raw = (system_prompt or "") + "||" + prompt
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+def _get_cached(key: str) -> str | None:
+    """Return cached response if it exists, else None."""
+    path = CACHE_DIR / f"{key}.json"
+    if path.exists():
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data["response"]
+    return None
+
+def _save_cache(key: str, prompt: str, response: str) -> None:
+    """Save an LLM response to disk."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = CACHE_DIR / f"{key}.json"
+    data = {"prompt": prompt, "response": response}
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+def call_llm_cached(prompt: str, system_prompt: str | None = None) -> str:
+    """call_llm with disk caching. Checks cache first, only hits API on miss."""
+    key = _cache_key(prompt, system_prompt)
+    cached = _get_cached(key)
+    if cached is not None:
+        return cached
+    response = call_llm(prompt, system_prompt)
+    _save_cache(key, prompt, response)
+    return response
 
 # ---------------------------------------------------------------------------
 # System prompt — shared by all explanation types
@@ -111,18 +150,18 @@ def build_pattern_prompt(pattern: dict) -> str:
 
 def explain_moment(danger_moment: dict, match_name: str, opponent: str) -> str:
     prompt = build_moment_prompt(danger_moment, match_name, opponent)
-    return call_llm(prompt, system_prompt=SYSTEM_PROMPT)
+    return call_llm_cached(prompt, system_prompt=SYSTEM_PROMPT)
 
 def explain_window(events_in_window: list[dict], window_start: int,
                    window_end: int, match_name: str, opponent: str,
                    avg_risk: float) -> str:
     prompt = build_window_prompt(events_in_window, window_start, window_end,
                                  match_name, opponent, avg_risk)
-    return call_llm(prompt, system_prompt=SYSTEM_PROMPT)
+    return call_llm_cached(prompt, system_prompt=SYSTEM_PROMPT)
 
 def explain_pattern(pattern: dict) -> str:
     prompt = build_pattern_prompt(pattern)
-    return call_llm(prompt, system_prompt=SYSTEM_PROMPT)
+    return call_llm_cached(prompt, system_prompt=SYSTEM_PROMPT)
 
 if __name__ == "__main__":
     print(f"Model:  {OPENROUTER_MODEL}")
