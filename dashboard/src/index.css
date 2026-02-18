@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --color-barca-maroon: #A50044;
+  --color-barca-blue: #004D98;
+  --color-barca-gold: #EDBB00;
+  --color-risk-low: #22c55e;
+  --color-risk-medium: #eab308;
+  --color-risk-high: #ef4444;
+}
+
+body {
+  margin: 0;
+  background-color: #111827;
+  color: #f3f4f6;
+  font-family: system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
+}
