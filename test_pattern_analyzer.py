@@ -18,7 +18,7 @@ def main():
         min_subseq_similarity=0.85,
         min_match_frequency=2,
         min_occurrences=3,
-        min_lift=1.25,
+        min_lift=1.15,
     )
 
     print("Patterns found:", len(patterns))
@@ -26,12 +26,16 @@ def main():
         print(
             p["frequency"],
             "| occ=", p["occurrences"],
-            "| goal_rate=", p["goal_rate"],
-            "| baseline=", p["baseline_goal_rate"],
+            "| goals=", p["goals_in_pattern"],
+            "| goal_rate=", p["pattern_goal_rate"],
+            "| base=", p["baseline_goal_rate"],
             "| lift=", p["lift"],
+            "| conf=", p["confidence_score"], f"({p['confidence_tier']})",
+            "| p>", p["p_goal_rate_gt_baseline"],
+            "| CI90=[", p["ci90_low"], ",", p["ci90_high"], "]",
             "| seq:", " → ".join(p["sequence"]),
-            "| goals=", p["goals_in_pattern"]
         )
+
         print("examples:", p["example_matches"])
         print()
 

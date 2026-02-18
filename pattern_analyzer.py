@@ -1,11 +1,34 @@
+"""
+pattern_analyzer.py
+
+Phase 3: Cross-match pattern detection
+
+Pipeline:
+  matches -> events_df -> risk_df -> danger moments -> fingerprint_seq -> cluster -> stats + confidence
+
+Key outputs per pattern:
+  - sequence (list[str])
+  - match_count + frequency
+  - occurrences, goals_in_pattern
+  - pattern_goal_rate, baseline_goal_rate, lift
+  - avg_time_to_goal (seconds, optional)
+  - Bayesian confidence fields (posterior mean, CI, P(p>baseline), confidence_score, tier)
+  - example_matches + a few example danger moments (for traceability)
+
+Notes:
+  - Fingerprints are heuristic (NOT ML).
+  - Clustering uses subsequence similarity (order preserved, not necessarily contiguous).
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
-from collections import defaultdict
+from typing import Any, Dict, List, Optional
 
+import math
 import numpy as np
 import pandas as pd
+from scipy.stats import beta  # scipy already in project from danger_detector
 
 from data_loader import list_matches, load_events
 from risk_engine import compute_risk_score, OPPONENT_WEIGHTS, BARCA_WEIGHTS
@@ -31,29 +54,32 @@ DEFAULT_STOPWORDS = {
 # Keep fingerprints short + interpretable
 DEFAULT_TOP_K_CODES = 4
 
-# Pattern grouping
+# Pattern grouping defaults
 DEFAULT_MIN_SUBSEQ_SIMILARITY = 0.85
 DEFAULT_MIN_MATCH_FREQUENCY = 2
 
-# NEW: avoid useless "BALL IN FINAL THIRD -> BALL IN THE BOX" patterns
-MIN_PATTERN_LEN = 4
+# Optional: keep patterns from being trivial (you can enforce this in find_patterns if you want)
+MIN_PATTERN_LEN = 2
 
-# NEW: require at least one "cause" code so patterns are actionable
+# Confidence tier thresholds (coach-facing)
+CONF_TIER_HIGH = 0.70
+CONF_TIER_MED = 0.45
+
 CAUSE_CODES = {
     "ATTACKING TRANSITION",
     "DEFENSIVE TRANSITION",
     "PROGRESSION",
     "CREATING CHANCES",
 }
+
 REQUIRE_CAUSE_CODE = True
 
-# Optional: if you ONLY want goal-related patterns (coach-facing version)
-REPORT_GOAL_ONLY = False
-
-
 # ----------------------------
-# Helpers
+# Helpers: fingerprint building
 # ----------------------------
+
+def _has_cause_code(seq: List[str]) -> bool:
+    return any(c in CAUSE_CODES for c in (seq or []))
 
 def _normalize_active_events_to_codes(active_events: Any) -> List[str]:
     """
@@ -93,7 +119,7 @@ def _normalize_active_events_to_codes(active_events: Any) -> List[str]:
 
 def _dedupe_preserve_order(seq: List[str]) -> List[str]:
     seen = set()
-    out = []
+    out: List[str] = []
     for x in seq:
         if x not in seen:
             seen.add(x)
@@ -113,17 +139,11 @@ def _compress_sequence_keep_order(seq: List[str], top_k: int = DEFAULT_TOP_K_COD
     """
     if not seq:
         return []
-
     unique = _dedupe_preserve_order(seq)
     scored = [(c, _code_weight(c)) for c in unique]
     scored.sort(key=lambda x: x[1], reverse=True)
-
-    keep = set([c for c, _w in scored[:top_k]])
+    keep = {c for c, _w in scored[:top_k]}
     return [c for c in unique if c in keep]
-
-
-def _has_cause_code(seq: List[str], cause_codes: set[str] = CAUSE_CODES) -> bool:
-    return any(c in cause_codes for c in (seq or []))
 
 
 def build_fingerprint_sequence(
@@ -138,9 +158,7 @@ def build_fingerprint_sequence(
     Fingerprint = codes that ENTER the active set over the last `window_sec`,
     filtered by stopwords, then compressed to top_k by weight.
 
-    Note:
-      - This is intentionally NOT ML. It’s a stable heuristic fingerprint.
-      - We dedupe + keep order to preserve the tactical story.
+    We dedupe + keep order to preserve the tactical story.
     """
     if stopwords is None:
         stopwords = DEFAULT_STOPWORDS
@@ -173,6 +191,10 @@ def build_fingerprint_sequence(
     return seq
 
 
+# ----------------------------
+# Helpers: sequence similarity
+# ----------------------------
+
 def _is_subsequence(shorter: List[str], longer: List[str]) -> bool:
     """True if `shorter` is a subsequence of `longer` (order preserved, not necessarily contiguous)."""
     if not shorter:
@@ -183,7 +205,7 @@ def _is_subsequence(shorter: List[str], longer: List[str]) -> bool:
 
 def subseq_similarity(a: List[str], b: List[str]) -> float:
     """
-    A simple similarity for sequences based on subsequence overlap.
+    Simple similarity based on subsequence overlap.
     Returns value in [0,1].
     """
     if not a and not b:
@@ -193,12 +215,67 @@ def subseq_similarity(a: List[str], b: List[str]) -> float:
 
     if len(a) <= len(b):
         overlap = len(a) if _is_subsequence(a, b) else 0
-        denom = max(len(a), len(b))
-        return overlap / denom
+        return overlap / max(len(a), len(b))
     else:
         overlap = len(b) if _is_subsequence(b, a) else 0
-        denom = max(len(a), len(b))
-        return overlap / denom
+        return overlap / max(len(a), len(b))
+
+
+# ----------------------------
+# Helpers: goal time enrichment
+# ----------------------------
+
+def _get_opponent_goal_times(events_df: pd.DataFrame) -> List[int]:
+    """
+    Return sorted list of opponent GOALS timestamps (seconds).
+    Tries to find a start-time column from common names.
+    """
+    if events_df is None or len(events_df) == 0:
+        return []
+
+    # Find a usable start-time column
+    start_col = None
+    for c in ["start_sec", "start", "Start", "start_time", "StartTime"]:
+        if c in events_df.columns:
+            start_col = c
+            break
+    if start_col is None:
+        return []
+
+    if "code" not in events_df.columns or "Team" not in events_df.columns:
+        return []
+
+    goals = events_df[events_df["code"] == "GOALS"].copy()
+
+    # Opponent goals only (not Barça goals)
+    goals = goals[goals["Team"].astype(str).str.lower() != "barça"]
+
+    times: List[int] = []
+    for v in goals[start_col].tolist():
+        try:
+            times.append(int(v))
+        except Exception:
+            pass
+
+    return sorted(times)
+
+
+def _next_goal_delta_sec(
+    peak_time: int,
+    opponent_goal_times: List[int],
+    max_lookahead: int = 120,
+) -> Optional[int]:
+    """
+    Returns seconds until next opponent goal after peak_time, if within max_lookahead.
+    Else returns None.
+    """
+    if not opponent_goal_times:
+        return None
+    for gt in opponent_goal_times:
+        if gt >= peak_time:
+            delta = gt - peak_time
+            return int(delta) if delta <= max_lookahead else None
+    return None
 
 
 # ----------------------------
@@ -215,11 +292,16 @@ def build_all_matches_dangers_for_patterns(
     prominence: float = 10.0,
     goal_lookback: int = 90,
     merge_within_sec: int = 60,
+    time_to_goal_lookahead_sec: int = 120,
 ) -> List[Dict[str, Any]]:
     """
     For each match:
-      events_df -> risk_df -> danger moments -> (optional filter) -> fingerprint
-    Returns a flat list of danger dicts, each augmented with match_name + fingerprint.
+      events_df -> risk_df -> danger moments -> (optional filter) -> fingerprint + time_to_goal_sec
+
+    Returns a flat list of danger dicts, each augmented with:
+      - match_name
+      - fingerprint_seq
+      - time_to_goal_sec (Optional[int])
     """
     all_dangers: List[Dict[str, Any]] = []
 
@@ -242,14 +324,17 @@ def build_all_matches_dangers_for_patterns(
             merge_within_sec=merge_within_sec,
         )
 
-        # ✅ FILTER HERE (before fingerprinting)
+        # Filter BEFORE fingerprinting
         if mode == "goals":
             dangers = [d for d in dangers if bool(d.get("resulted_in_goal", False))]
         elif mode == "critical":
             dangers = [d for d in dangers if str(d.get("severity", "")).lower() == "critical"]
 
+        opp_goal_times = _get_opponent_goal_times(events_df)
+
         for d in dangers:
             peak_time = int(d["peak_time"])
+
             seq = build_fingerprint_sequence(
                 risk_df,
                 peak_time_sec=peak_time,
@@ -258,9 +343,16 @@ def build_all_matches_dangers_for_patterns(
                 top_k=DEFAULT_TOP_K_CODES,
             )
 
+            time_to_goal = _next_goal_delta_sec(
+                peak_time,
+                opp_goal_times,
+                max_lookahead=time_to_goal_lookahead_sec,
+            )
+
             dd = dict(d)
             dd["match_name"] = match_name
             dd["fingerprint_seq"] = seq
+            dd["time_to_goal_sec"] = time_to_goal
             all_dangers.append(dd)
 
     return all_dangers
@@ -285,49 +377,59 @@ def find_patterns(
     min_subseq_similarity: float = DEFAULT_MIN_SUBSEQ_SIMILARITY,
     min_match_frequency: int = DEFAULT_MIN_MATCH_FREQUENCY,
     min_occurrences: int = 3,
-    min_lift: float = 1.25,
+    min_lift: float = 1.15,
+    # Confidence tuning knobs
+    ci_level: float = 0.90,                 # 90% credible interval
+    support_target_occ: int = 25,           # how many occurrences until "fully supported"
+    support_target_matches: int = 6,        # how many matches until "fully supported"
 ) -> List[Dict[str, Any]]:
     """
-    Group similar sequences and return summary patterns.
+    Cluster sequences into patterns and compute confidence.
 
-    IMPORTANT:
-    - If you pass goal-only `all_dangers`, you MUST pass `baseline_dangers`
-      (typically mode="all") to compute a meaningful baseline goal rate.
+    Baseline:
+      - baseline_dangers should be ALL danger moments (mode="all") for stable baseline.
+      - if not provided, baseline is computed from all_dangers (less ideal).
+
+    Confidence is Bayesian:
+      - model: goal ~ Bernoulli(p)
+      - prior: Beta(1,1)
+      - posterior: Beta(k+1, n-k+1)
+    Then compute:
+      - P(p > baseline_goal_rate)
+      - credible interval for p
+      - composite confidence_score = P(p > baseline) * support_scaler
     """
 
-    # ---------- helpers ----------
-    def _passes_sequence_filters(seq: List[str]) -> bool:
-        if not seq:
-            return False
-        if len(seq) < MIN_PATTERN_LEN:
-            return False
-        if REQUIRE_CAUSE_CODE and not _has_cause_code(seq, CAUSE_CODES):
-            return False
-        return True
+    # ----------------------------
+    # Compute baseline goal rate
+    # ----------------------------
+    base = baseline_dangers if baseline_dangers is not None else all_dangers
 
-    # ---------- choose baseline ----------
-    baseline_src = baseline_dangers if baseline_dangers is not None else all_dangers
-
-    baseline_occ = 0
-    baseline_goals = 0
-    for d in baseline_src:
+    def _valid_seq(d: Dict[str, Any]) -> bool:
         seq = d.get("fingerprint_seq", []) or []
-        if not _passes_sequence_filters(seq):
-            continue
-        baseline_occ += 1
-        if bool(d.get("resulted_in_goal", False)):
-            baseline_goals += 1
+        return bool(seq) and len(seq) >= MIN_PATTERN_LEN
 
-    baseline_goal_rate = (baseline_goals / baseline_occ) if baseline_occ else 0.0
+    base_occ = sum(1 for d in base if _valid_seq(d))
+    base_goals = sum(1 for d in base if _valid_seq(d) and bool(d.get("resulted_in_goal", False)))
+    baseline_goal_rate = (base_goals / base_occ) if base_occ else 0.0
 
-    # ---------- cluster goal (or selected) dangers ----------
+
+    total_matches = len(set(d.get("match_name", "UNKNOWN") for d in base))
+
+    # ----------------------------
+    # Build clusters from all_dangers
+    # ----------------------------
     clusters: List[Pattern] = []
-    total_matches = len(set(d.get("match_name", "UNKNOWN") for d in all_dangers))
 
     for d in all_dangers:
         seq: List[str] = d.get("fingerprint_seq", []) or []
-        if not _passes_sequence_filters(seq):
+        if not seq:
             continue
+        if len(seq) < MIN_PATTERN_LEN:
+            continue
+        if REQUIRE_CAUSE_CODE and not _has_cause_code(seq):
+            continue
+
 
         match_name = str(d.get("match_name", "UNKNOWN"))
         resulted_in_goal = bool(d.get("resulted_in_goal", False))
@@ -342,9 +444,10 @@ def find_patterns(
                 if resulted_in_goal:
                     c.goals_in_pattern += 1
 
-                # keep representative short
+                # keep representative short / interpretable
                 if len(seq) < len(c.sequence):
                     c.sequence = seq
+
                 placed = True
                 break
 
@@ -358,45 +461,93 @@ def find_patterns(
                 )
             )
 
-    # ---------- compute occurrences + lift using *baseline_src* ----------
+    # ----------------------------
+    # Score + filter clusters (using baseline set)
+    # ----------------------------
     out: List[Dict[str, Any]] = []
+    alpha = (1.0 - ci_level) / 2.0
 
     for c in clusters:
         match_count = len(c.matches)
         if match_count < min_match_frequency:
             continue
 
+        # Count occurrences for this cluster in baseline set
         occurrences = 0
-        goals_in_cluster = 0
+        goals_for_pattern = 0
+        deltas: List[int] = []
 
-        for d in baseline_src:
-            seq = d.get("fingerprint_seq", []) or []
-            if not _passes_sequence_filters(seq):
+        for d in base:
+            if not _valid_seq(d):
                 continue
+            seq = d.get("fingerprint_seq", []) or []
+
             if subseq_similarity(seq, c.sequence) >= min_subseq_similarity:
                 occurrences += 1
                 if bool(d.get("resulted_in_goal", False)):
-                    goals_in_cluster += 1
+                    goals_for_pattern += 1
+                if bool(d.get("resulted_in_goal", False)):
+                    dt = d.get("time_to_goal_sec", None)
+                    if isinstance(dt, (int, float)):
+                        deltas.append(int(dt))
 
         if occurrences < min_occurrences:
             continue
 
-        goal_rate = (goals_in_cluster / occurrences) if occurrences else 0.0
-        lift = (goal_rate / baseline_goal_rate) if baseline_goal_rate > 0 else 0.0
-
+        pattern_goal_rate = goals_for_pattern / occurrences if occurrences else 0.0
+        lift = (pattern_goal_rate / baseline_goal_rate) if baseline_goal_rate > 0 else 0.0
         if lift < min_lift:
             continue
+
+        avg_time_to_goal = (sum(deltas) / len(deltas)) if deltas else None
+
+        # ----------------------------
+        # Bayesian confidence
+        # ----------------------------
+        a_post = goals_for_pattern + 1
+        b_post = (occurrences - goals_for_pattern) + 1
+
+        ci_low = float(beta.ppf(alpha, a_post, b_post))
+        ci_high = float(beta.ppf(1.0 - alpha, a_post, b_post))
+        post_mean = float(a_post / (a_post + b_post))
+
+        p_gt_baseline = float(1.0 - beta.cdf(baseline_goal_rate, a_post, b_post))
+
+        support_occ = min(1.0, math.log1p(occurrences) / math.log1p(support_target_occ))
+        support_matches = min(1.0, match_count / support_target_matches)
+        support_scaler = 0.5 * support_occ + 0.5 * support_matches
+
+        confidence_score = float(p_gt_baseline * support_scaler)
+
+        if confidence_score >= CONF_TIER_HIGH:
+            tier = "high"
+        elif confidence_score >= CONF_TIER_MED:
+            tier = "medium"
+        else:
+            tier = "low"
 
         out.append(
             {
                 "sequence": c.sequence,
                 "match_count": match_count,
                 "frequency": f"{match_count}/{total_matches} matches",
-                "occurrences": occurrences,
-                "goals_in_pattern": int(c.goals_in_pattern),  # from the passed-in (often goal-only) list
-                "goal_rate": round(goal_rate, 4),
+                "occurrences": int(occurrences),
+                "goals_in_pattern": int(goals_for_pattern),
+
+                "pattern_goal_rate": round(pattern_goal_rate, 4),
                 "baseline_goal_rate": round(baseline_goal_rate, 4),
                 "lift": round(lift, 3),
+                "avg_time_to_goal": (round(avg_time_to_goal, 2) if avg_time_to_goal is not None else None),
+
+                # confidence fields (stable keys for LLM schema)
+                "posterior_mean": round(post_mean, 4),
+                "ci_level": float(ci_level),
+                "ci_low": round(ci_low, 4),
+                "ci_high": round(ci_high, 4),
+                "p_goal_rate_gt_baseline": round(p_gt_baseline, 4),
+                "confidence_score": round(confidence_score, 4),
+                "confidence_tier": tier,
+
                 "example_matches": sorted(list(c.matches))[:5],
                 "examples": [
                     {
@@ -412,7 +563,44 @@ def find_patterns(
             }
         )
 
-    out.sort(key=lambda p: (p["match_count"], p["lift"], p["occurrences"]), reverse=True)
+    # Sort: confidence first, then lift, then coverage/support
+    out.sort(
+        key=lambda p: (
+            p["confidence_score"],
+            p["lift"],
+            p["match_count"],
+            p["occurrences"],
+        ),
+        reverse=True,
+    )
+    return out
+
+
+def format_patterns_for_llm(patterns: List[Dict[str, Any]], top_n: int = 10) -> List[Dict[str, Any]]:
+    """
+    Trim patterns down to the fields the LLM should see.
+    Keeps it stable + schema-friendly for build_pattern_prompt().
+    """
+    out: List[Dict[str, Any]] = []
+    for p in (patterns or [])[:top_n]:
+        out.append(
+            {
+                "sequence": p.get("sequence", []),
+                "frequency": p.get("frequency"),
+                "example_matches": p.get("example_matches", []),
+                "avg_time_to_goal": p.get("avg_time_to_goal", None),
+
+                # optional extra grounding stats
+                "confidence_score": p.get("confidence_score"),
+                "confidence_tier": p.get("confidence_tier"),
+                "lift": p.get("lift"),
+                "occurrences": p.get("occurrences"),
+                "goals_in_pattern": p.get("goals_in_pattern"),
+                "pattern_goal_rate": p.get("pattern_goal_rate"),
+                "baseline_goal_rate": p.get("baseline_goal_rate"),
+                "p_goal_rate_gt_baseline": p.get("p_goal_rate_gt_baseline"),
+            }
+        )
     return out
 
 
@@ -426,21 +614,35 @@ def _pretty_seq(seq: List[str]) -> str:
 
 def main():
     matches = list_matches()
-    all_dangers = build_all_matches_dangers_for_patterns(matches, mode="goals")
 
-    print(f"Total danger moments for patterning: {len(all_dangers)}")
+    baseline = build_all_matches_dangers_for_patterns(matches, mode="all")
+    goals = build_all_matches_dangers_for_patterns(matches, mode="goals")
 
-    # patterns = find_patterns(
-    #     all_dangers,
-    #     min_subseq_similarity=DEFAULT_MIN_SUBSEQ_SIMILARITY,
-    #     min_match_frequency=DEFAULT_MIN_MATCH_FREQUENCY,
-    # )
+    print(f"Baseline danger moments: {len(baseline)}")
+    print(f"Goal danger moments: {len(goals)}")
 
-    # print(f"Patterns found: {len(patterns)}\n")
+    patterns = find_patterns(
+        goals,
+        baseline_dangers=baseline,
+        min_subseq_similarity=0.85,
+        min_match_frequency=2,
+        min_occurrences=3,
+        min_lift=1.15,
+    )
 
-    # for p in patterns[:12]:
-    #     print(f"{p['frequency']} | goals_in_pattern={p['goals_in_pattern']} | seq: {_pretty_seq(p['sequence'])}")
-    #     print(f"examples: {p['example_matches']}\n")
+    print(f"Patterns found: {len(patterns)}\n")
+
+    for p in patterns[:10]:
+        print(
+            f"{p['frequency']} | occ={p['occurrences']} | goal_rate={p['pattern_goal_rate']} "
+            f"| baseline={p['baseline_goal_rate']} | lift={p['lift']} "
+            f"| conf={p['confidence_score']} ({p['confidence_tier']}) "
+            f"| seq: {_pretty_seq(p['sequence'])} | goals={p['goals_in_pattern']}"
+        )
+        print(f"examples: {p['example_matches']}")
+        if p.get("avg_time_to_goal") is not None:
+            print(f"avg_time_to_goal: {p['avg_time_to_goal']} sec")
+        print()
 
 
 if __name__ == "__main__":
