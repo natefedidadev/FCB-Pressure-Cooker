@@ -65,18 +65,26 @@ SYSTEM_PROMPT = (
     "You analyze defensive vulnerabilities using event timeline data from matches. "
     "Your explanations should be concise (3-5 sentences), tactically specific, and "
     "actionable for coaches. Use professional football terminology. "
-    "Do not speculate beyond what the data shows."
+    "Do not speculate beyond what the data shows. "
+    "When referencing events, cite the exact event code tags in [BRACKETS] "
+    "(e.g. [BALL IN THE BOX], [DEFENSIVE TRANSITION]) so we can trace your analysis back to the data."
 )
 
-def _fmt(seconds: int | float) -> str:
-    """Convert seconds to MM:SS."""
-    m, s = divmod(int(seconds), 60)
+def _fmt(seconds: int | float, halftime_offset: int = 0, h2_start_sec: int = 0) -> str:
+    """Convert raw XML seconds to match-time MM:SS.
+    For second-half timestamps (>= h2_start_sec), subtracts halftime_offset."""
+    s = int(seconds)
+    if halftime_offset and h2_start_sec and s >= h2_start_sec:
+        s -= halftime_offset
+    m, s = divmod(s, 60)
     return f"{m}:{s:02d}"
 
-def build_moment_prompt(danger_moment: dict, match_name: str, opponent: str) -> str:
-    peak = _fmt(danger_moment["peak_time"])
-    w_start = _fmt(danger_moment["window_start"])
-    w_end = _fmt(danger_moment["window_end"])
+def build_moment_prompt(danger_moment: dict, match_name: str, opponent: str,
+                        halftime_offset: int = 0, h2_start_sec: int = 0) -> str:
+    fmt = lambda secs: _fmt(secs, halftime_offset, h2_start_sec)
+    peak = fmt(danger_moment["peak_time"])
+    w_start = fmt(danger_moment["window_start"])
+    w_end = fmt(danger_moment["window_end"])
     codes = ", ".join(danger_moment["active_codes"])
     score = danger_moment["peak_score"]
     severity = danger_moment["severity"]
@@ -96,14 +104,17 @@ def build_moment_prompt(danger_moment: dict, match_name: str, opponent: str) -> 
         f"the coaching staff address?"
     )
 
-def build_window_prompt(events_in_window: list[dict], window_start: int, window_end: int, match_name: str, opponent: str, avg_risk: float) -> str:
-    w_start = _fmt(window_start)
-    w_end = _fmt(window_end)
+def build_window_prompt(events_in_window: list[dict], window_start: int, window_end: int,
+                        match_name: str, opponent: str, avg_risk: float,
+                        halftime_offset: int = 0, h2_start_sec: int = 0) -> str:
+    fmt = lambda secs: _fmt(secs, halftime_offset, h2_start_sec)
+    w_start = fmt(window_start)
+    w_end = fmt(window_end)
 
     event_lines = []
     for e in events_in_window:
-        t0 = _fmt(e["start_sec"])
-        t1 = _fmt(e["end_sec"])
+        t0 = fmt(e["start_sec"])
+        t1 = fmt(e["end_sec"])
         event_lines.append(f"  - [{t0}-{t1}] {e['code']} (Team: {e['Team']})")
 
     events_str = "\n".join(event_lines) if event_lines else "  (no events in this window)"
@@ -139,15 +150,16 @@ def build_pattern_prompt(pattern: dict) -> str:
         f"adjustments would you recommend to the coaching staff?"
     )
 
-def explain_moment(danger_moment: dict, match_name: str, opponent: str) -> str:
-    prompt = build_moment_prompt(danger_moment, match_name, opponent)
+def explain_moment(danger_moment: dict, match_name: str, opponent: str,
+                   halftime_offset: int = 0, h2_start_sec: int = 0) -> str:
+    prompt = build_moment_prompt(danger_moment, match_name, opponent, halftime_offset, h2_start_sec)
     return call_llm_cached(prompt, system_prompt=SYSTEM_PROMPT)
 
 def explain_window(events_in_window: list[dict], window_start: int,
                    window_end: int, match_name: str, opponent: str,
-                   avg_risk: float) -> str:
+                   avg_risk: float, halftime_offset: int = 0, h2_start_sec: int = 0) -> str:
     prompt = build_window_prompt(events_in_window, window_start, window_end,
-                                 match_name, opponent, avg_risk)
+                                 match_name, opponent, avg_risk, halftime_offset, h2_start_sec)
     return call_llm_cached(prompt, system_prompt=SYSTEM_PROMPT)
 
 def explain_pattern(pattern: dict) -> str:
