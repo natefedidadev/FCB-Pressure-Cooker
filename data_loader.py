@@ -56,7 +56,17 @@ def load_events(match: str | int, matches_dir: Path = MATCHES_DIR) -> pd.DataFra
     dataset = sportscode.load(str(xml_file))
     df = dataset.to_df()
     df["match_name"] = mp.name
-    return df
+    return df.sort_values(["period_id", "timestamp"]).reset_index(drop=True)
+
+
+def get_halftime_offset(events_df: pd.DataFrame) -> pd.Timedelta:
+    """Return the gap to subtract from 2nd half timestamps for display purposes.
+    Raw data stays untouched — use this only when formatting times for humans."""
+    SECOND_HALF_START = pd.Timedelta(minutes=45)
+    h2 = events_df[events_df["Half"] == "2nd Half"]
+    if h2.empty:
+        return pd.Timedelta(0)
+    return h2["timestamp"].min() - SECOND_HALF_START
 
 
 # ---------------------------------------------------------------------------

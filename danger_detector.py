@@ -101,7 +101,7 @@ def _get_goal_timestamps_sec(
     if events_df is None or len(events_df) == 0:
         return []
 
-    if "code" not in events_df.columns or "timestamp" not in events_df.columns:
+    if "code" not in events_df.columns:
         return []
 
     goals = events_df[events_df["code"] == "GOALS"].copy()
@@ -114,7 +114,10 @@ def _get_goal_timestamps_sec(
     if len(goals) == 0:
         return []
 
-    ts = goals["timestamp"]
+    # Metrica's GOALS window covers buildup -> goal -> celebration
+    # the actual goal happens near the END of the window
+    ts_col = "end_timestamp" if "end_timestamp" in goals.columns else "timestamp"
+    ts = goals[ts_col]
 
     # timedelta
     if pd.api.types.is_timedelta64_dtype(ts):

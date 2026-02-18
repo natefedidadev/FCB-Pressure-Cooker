@@ -84,21 +84,14 @@ def _compute_raw_scores(time_grid: np.ndarray, events_cleaned: pd.DataFrame,
 def _smooth_scores(raw_scores: np.ndarray, window: int = DEFAULT_SMOOTHING_WINDOW) -> np.ndarray:
     return pd.Series(raw_scores).rolling(window=window, center=True, min_periods=1).mean().to_numpy()
 
-# now we normalize the scores to have a consistent risk value
-# a boring game could range from 0 - 30 and a chaotic game could range from 0 - 80
-# we need to scale them to 0 - 100 so scores are comparable across every game
+# the theoretical max is the sum of all weights EXCLUDING goals
+# this way, dangerous play without a goal tops out around 70-80
+# and only a GOALS event (+10) can push the score toward 100
+THEORETICAL_MAX = sum(v for k, v in OPPONENT_WEIGHTS.items() if k != 'GOALS') + sum(BARCA_WEIGHTS.values())
 
 def _normalize_scores(smoothed_scores: np.ndarray) -> np.ndarray:
-    # min - max normalization
-    array_max = np.max(smoothed_scores)
-    array_min = np.min(smoothed_scores)
-    
-    if array_max == array_min:
-        return np.zeros_like(smoothed_scores)
-    else:
-        normalized_scores = (smoothed_scores - array_min) / (array_max - array_min) * 100
-    
-    return normalized_scores
+    normalized_scores = (smoothed_scores / THEORETICAL_MAX) * 100
+    return np.clip(normalized_scores, 0, 100)
 
 def compute_risk_score(
     events_df: pd.DataFrame,
@@ -111,6 +104,18 @@ def compute_risk_score(
     raw_scores, active_events = _compute_raw_scores(time_grid, events_cleaned, opponent_weights, barca_weights)
     smoothed = _smooth_scores(raw_scores, smoothing_window)
     normalized = _normalize_scores(smoothed)
-    
+
+    # Metrica's GOALS window covers buildup -> goal -> celebration
+    # the actual goal happens near the END of the window, not the start
+    # override only the last 5 seconds of the window to 100
+    GOAL_SPIKE_SECONDS = 5
+    goals_against = events_cleaned[
+        (events_cleaned['code'] == 'GOALS') & (events_cleaned['Team'] != BARCA_TEAM_NAME)
+    ]
+    for _, g in goals_against.iterrows():
+        goal_sec = g['end_sec']
+        spike_start = max(goal_sec - GOAL_SPIKE_SECONDS, g['start_sec'])
+        normalized[spike_start : goal_sec] = 100.0
+
     return pd.DataFrame({'timestamp_sec': time_grid, 'risk_score': np.round(normalized, 2), 'active_events': active_events})
     
