@@ -39,22 +39,23 @@ export default function WindowAnalysis({ matchIndex, windowStart, windowEnd, onC
   };
 
   return (
-    <div className="bg-gray-800 rounded-xl p-4 border border-barca-blue/50 mt-4">
-      <div className="flex items-center gap-4 flex-wrap">
-        <span className="text-gray-300 text-sm">
-          Selected window: <span className="text-white font-medium">{fmtMin(startMin)} - {fmtMin(endMin)}</span>
+    <div className="bg-surface rounded-2xl p-5 border border-barca-blue/20 shadow-[0_4px_30px_rgba(0,0,0,0.3)]">
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-muted text-sm">
+          Window: <span className="font-medium text-white">{fmtMin(startMin)} - {fmtMin(endMin)}</span>
         </span>
         <button
           onClick={handleAnalyze}
           disabled={analyzing}
-          className="bg-barca-blue text-white px-4 py-1.5 rounded-lg text-sm font-medium
-                     hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="bg-barca-blue text-white px-4 py-1.5 rounded-full text-sm font-medium
+                     hover:brightness-125 disabled:opacity-50 disabled:cursor-not-allowed transition
+                     shadow-[0_0_15px_rgba(0,77,152,0.3)]"
         >
           {analyzing ? "Analyzing..." : "Analyze Window"}
         </button>
         <button
           onClick={handleClear}
-          className="text-gray-500 hover:text-white text-sm"
+          className="text-muted hover:text-white text-sm transition-colors"
         >
           Clear
         </button>
@@ -66,11 +67,11 @@ export default function WindowAnalysis({ matchIndex, windowStart, windowEnd, onC
 
       {result && (
         <div className="mt-4">
-          <div className="flex gap-4 text-sm text-gray-400 mb-2">
-            <span>Avg risk: <span className="text-white">{result.avg_risk}</span></span>
-            <span>Events: <span className="text-white">{result.event_count}</span></span>
+          <div className="flex gap-4 text-sm text-muted mb-2">
+            <span>Avg risk: <span className="font-medium text-white">{result.avg_risk}</span></span>
+            <span>Events: <span className="font-medium text-white">{result.event_count}</span></span>
           </div>
-          <div className="text-gray-100 leading-relaxed whitespace-pre-wrap text-sm">
+          <div className="text-white/80 leading-relaxed whitespace-pre-wrap text-sm">
             {result.explanation}
           </div>
         </div>
