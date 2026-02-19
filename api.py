@@ -25,7 +25,7 @@ app.add_middleware(
 # In-memory cache: avoid recomputing risk scores on every request
 _cache = {}
 
-# Seconds of pre-kickoff broadcast content per match video (user-measured)
+# Seconds of pre-kickoff broadcast content per match video (user-measured, 1st half)
 VIDEO_PRE_MATCH_OFFSETS = {
     0: 105,   # AC Milan - Barça (0-1)
     1: 280,   # Arsenal - Barça (5-3)
@@ -38,6 +38,22 @@ VIDEO_PRE_MATCH_OFFSETS = {
     8: 927,   # FC Seül - Barça (3-7)
     9: 283,   # Reial Madrid - Barça (1-2)
     10: 590,  # Vissel Kobe - Barça (1-3)
+}
+
+# Additional seconds to add to 2nd half seeks on top of VIDEO_PRE_MATCH_OFFSETS
+# = display_window_start - video_clip_time (user-measured per match)
+VIDEO_H2_EXTRA_OFFSETS = {
+    0:   -5,  # AC Milan - Barça (0-1)       73:43 -> 73:48
+    1:   96,  # Arsenal - Barça (5-3)         54:45 -> 53:09
+    2:  507,  # Barça - AC Milan (2-2)        64:18 -> 55:51
+    3:  357,  # Barça - AS Mònaco (0-3)       58:52 -> 52:55
+    4:  349,  # Barça - Como 1907 (5-0)       62:28 -> 56:39
+    5:  283,  # Barça - Manchester City (2-2) 52:37 -> 47:54
+    6:  373,  # Barça - Reial Madrid (3-0)    73:22 -> 67:09
+    7:  300,  # Daegu FC - Barça (0-5)        49:09 -> 44:09
+    8:  403,  # FC Seül - Barça (3-7)         83:56 -> 77:13
+    9:  832,  # Reial Madrid - Barça (1-2)    81:17 -> 67:25
+    10: 178,  # Vissel Kobe - Barça (1-3)     91:01 -> 88:03
 }
 
 def _get_match_data(index: int):
@@ -141,7 +157,14 @@ def get_dangers(index: int):
         })
 
     video_offset = VIDEO_PRE_MATCH_OFFSETS.get(index, 0)
-    return {"match_name": match_name, "opponent": opponent, "dangers": results, "video_pre_match_offset": video_offset}
+    video_h2_extra = VIDEO_H2_EXTRA_OFFSETS.get(index, 0)
+    return {
+        "match_name": match_name,
+        "opponent": opponent,
+        "dangers": results,
+        "video_pre_match_offset": video_offset,
+        "video_h2_extra_offset": video_h2_extra,
+    }
 
 
 @app.get("/api/matches/{index}/video")

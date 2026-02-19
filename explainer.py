@@ -56,7 +56,10 @@ def call_llm_cached(prompt: str, system_prompt: str | None = None) -> str:
     cached = _get_cached(key)
     if cached is not None:
         return cached
-    response = call_llm(prompt, system_prompt)
+    try:
+        response = call_llm(prompt, system_prompt)
+    except Exception as e:
+        return f"[Explanation unavailable: {e}]"
     _save_cache(key, prompt, response)
     return response
 

@@ -14,16 +14,16 @@ const SEVERITY_STYLES = {
   moderate: "bg-yellow-500 text-gray-900",
 };
 
-// Start 8 seconds before the danger window for context
-const PRE_ROLL = 8;
-
-export default function DangerPanel({ danger, onClose, matchIndex, videoOffset = 0 }) {
+export default function DangerPanel({ danger, onClose, matchIndex, videoOffset = 0, videoH2Extra = 0 }) {
   const videoRef = useRef(null);
 
   useEffect(() => {
     if (!videoRef.current || !danger) return;
-    // window_start is match-relative; add videoOffset to account for pre-kickoff broadcast content
-    const seekTo = Math.max(0, danger.window_start + videoOffset - PRE_ROLL);
+    // 2nd half dangers need an extra offset because the video halftime duration
+    // differs from the data halftime break (user-measured per match)
+    const isSecondHalf = danger.window_start > danger.display_window_start;
+    const h2Extra = isSecondHalf ? videoH2Extra : 0;
+    const seekTo = Math.max(0, danger.display_window_start + videoOffset + h2Extra);
     const video = videoRef.current;
     const onReady = () => { video.currentTime = seekTo; };
     if (video.readyState >= 1) {
@@ -31,7 +31,7 @@ export default function DangerPanel({ danger, onClose, matchIndex, videoOffset =
     } else {
       video.addEventListener("loadedmetadata", onReady, { once: true });
     }
-  }, [danger, videoOffset]);
+  }, [danger, videoOffset, videoH2Extra]);
 
   if (!danger) return null;
 

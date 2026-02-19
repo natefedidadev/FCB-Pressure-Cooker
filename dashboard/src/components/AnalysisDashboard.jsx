@@ -116,6 +116,7 @@ export default function AnalysisDashboard() {
                   onClose={() => setSelectedDanger(null)}
                   matchIndex={index}
                   videoOffset={dangersData.video_pre_match_offset || 0}
+                  videoH2Extra={dangersData.video_h2_extra_offset || 0}
                 />
               )}
               {windowStart && windowEnd && (
