@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@theme {
+  --color-barca-maroon: #A50044;
+  --color-barca-blue: #004D98;
+  --color-barca-gold: #EDBB00;
+  --color-surface: #2a1520;
+  --color-surface-hover: #3a1f2d;
+  --color-muted: #b8a0a8;
+  --color-risk-low: #22c55e;
+  --color-risk-medium: #eab308;
+  --color-risk-high: #ef4444;
+}
+
+body {
+  margin: 0;
+  background-color: #1a0c12;
+  color: #f1f5f9;
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #1a0c12;
+}
+::-webkit-scrollbar-thumb {
+  background: #4a2535;
+  border-radius: 3px;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
