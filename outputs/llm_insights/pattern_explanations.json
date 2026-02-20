@@ -1,0 +1,25 @@
+[
+  {
+    "pattern": {
+      "sequence": [
+        "ATTACKING TRANSITION",
+        "DEFENSIVE TRANSITION"
+      ],
+      "frequency": "2/3 matches",
+      "example_matches": [
+        "Arsenal - Barça (5-3) Partit Amistós Gira 2023-2024",
+        "Barça - AC Milan (2-2_ 3-4) Partit Amistós Gira 2024-2025"
+      ],
+      "avg_time_to_goal": null,
+      "confidence_score": 0.4297,
+      "confidence_tier": "low",
+      "lift": 2.19,
+      "occurrences": 6,
+      "goals_in_pattern": 2,
+      "pattern_goal_rate": 0.3333,
+      "baseline_goal_rate": 0.1522,
+      "p_goal_rate_gt_baseline": 0.9235
+    },
+    "llm_response": "The ATTACKING TRANSITION to DEFENSIVE TRANSITION sequence indicates a quick loss of possession following offensive play, exposing the team's defensive structure. This vulnerability suggests a lack of compactness between the midfield and defensive lines, often resulting in players being caught out of position when the ball is turned over, thereby allowing opponents time and space to exploit gaps.\n\nTo address this, coaching staff should emphasize the importance of immediate transition awareness among players. Implementing drills that promote quick repositioning following offensive plays can help maintain defensive shape. Additionally, reinforcing adaptive formations that prioritize defensive resilience during transitions can mitigate risks associated with counter-attacks, particularly ensuring that midfielders have clear responsibilities to protect the backline during offensive surges."
+  }
+]
