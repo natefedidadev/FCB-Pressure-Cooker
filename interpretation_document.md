@@ -75,7 +75,9 @@ The original concept was individual player performance analysis. Due to tracking
 
 ## 2. Methodology: Risk Scoring Pipeline
 
-The pipeline converts raw Smart Tagging annotations into a continuous per-second risk score (0–100) for each match.
+*See attached: Figure — System Architecture (`architecture.png`)*
+
+The pipeline converts raw Smart Tagging annotations into a continuous per-second risk score (0–100) for each match. The end-to-end flow is: Smart Tagging XML → Risk Scoring → Danger Detection → Pattern Analysis → LLM Explanation → Dashboard with Video Seek.
 
 ### 2.1 Time Grid and Raw Score
 
@@ -206,6 +208,35 @@ The near-universal presence of PLAYERS IN THE BOX and BALL IN FINAL THIRD in dan
 
 *See attached: Figure 6 — Event Code Frequency in Danger Moments (`code_frequency.png`)*
 
+### 4.6 Half-by-Half Vulnerability Distribution
+
+| Period | Danger Moments | Critical | Goals Conceded |
+|--------|---------------|----------|----------------|
+| 1st Half | 76 (52.8%) | 10 | 8 |
+| 2nd Half | 68 (47.2%) | 11 | 9 |
+
+The distribution is nearly balanced between halves, with a slight first-half bias in total danger moments (76 vs 68). However, critical moments and goals are marginally higher in the second half, suggesting that while Barcelona faces more total pressure early, the most lethal threats arrive later — possibly due to fatigue, tactical adjustments by opponents, or increased openness in the second half.
+
+**Notable second-half collapses:** Monaco (0 → 5 critical moments in the 2nd half, all 3 goals conceded) and Real Madrid away (0 → 1 critical, 1 goal conceded in the 2nd half).
+
+*See attached: Figure 7 — Half-by-Half and Trigger Type Analysis (`half_and_triggers.png`)*
+
+### 4.7 Transition Play: The Primary Vulnerability Vector
+
+Transition moments (ATTACKING TRANSITION + DEFENSIVE TRANSITION) are present in **47.9% of all danger moments** (69/144) and account for **29.4% of goals conceded** (5/17). Both transitions always co-occur in the data — when the opponent launches an attacking transition, Barcelona is simultaneously in a defensive transition.
+
+Set pieces are involved in **36.1% of danger moments** (52/144) and **23.5% of goals** (4/17).
+
+The remaining danger moments arise from sustained positional attacks — opponent progression through midfield into the final third without a clear transition trigger.
+
+### 4.8 Deep Dive: Most Dangerous Matches
+
+**Arsenal (5-3) — highest total danger (22 moments, 6 critical):** This match produced the most danger of any game in the dataset. Five of Arsenal's goals were captured as critical danger moments. The match featured rapid transitions in both directions, with Arsenal particularly effective on the counter-attack. The system detected danger across both halves (12 in H1, 10 in H2), indicating sustained vulnerability rather than a single-half collapse.
+
+**AS Monaco (0-3) — most concentrated lethality:** Despite only 12 total danger moments, Monaco achieved a 42% critical rate (5/12). All danger escalated in the second half (0 critical in H1, 5 in H2). This suggests Monaco's half-time tactical adjustment was decisive, and Barcelona's defensive organization deteriorated sharply after the break.
+
+**Manchester City (2-2) — highest sustained pressure:** 20 danger moments with a match-leading average risk of 14.5. The first half was especially intense (16 of 20 dangers), though the system detected critical moments in both halves. The high moderate count (12) indicates City maintained territorial pressure even when not creating clear-cut chances.
+
 ---
 
 ## 5. Cross-Match Pattern Analysis
@@ -280,12 +311,19 @@ The system uses GPT-4o-mini (via OpenRouter) to transform structured evidence pa
 | Window prompt | Events in 5-min window, avg risk, team breakdown | Tactical summary of passage of play |
 | Pattern prompt | Sequence, frequency, confidence stats | Structural vulnerability explanation + recommendations |
 
-### 6.3 Example LLM Output
+### 6.3 Example LLM Outputs
 
-**Match:** AC Milan vs Barça (0-1)
-**Danger window:** 37:01 – 37:46 (peak at 37:17, risk score 77.17, severity: high)
+**Example 1 — High severity, open play:**
+Match: AC Milan vs Barça (0-1), danger window 37:01–37:46, peak risk 77.17, severity: high
 
 > *"During the critical window from 37:01 to 37:46, Barcelona's defensive structure appeared to falter primarily due to poor organization during the [DEFENSIVE TRANSITION]. As AC Milan initiated an [ATTACKING TRANSITION], Barcelona's players were slow to regroup, leading to unmarked opposition players in the [FINAL THIRD]. The lack of effective communication and commitment to closing down space in the [DEFENDING IN DEFENSIVE THIRD] allowed Milan to create multiple [BALL IN THE BOX] scenarios. To address these vulnerabilities, the coaching staff should emphasize rapid defensive recovery drills and reinforce the importance of spatial awareness during transitions."*
+
+**Example 2 — Moderate severity, set piece threat:**
+Match: AC Milan vs Barça (0-1), danger window 28:32–29:30, peak risk 50.0, severity: moderate
+
+> *"During the danger window from 28:32 to 29:30, FC Barcelona faced a considerable threat due to failures in managing defensive transitions [DEFENSIVE TRANSITION] and positioning during attacks by AC Milan. As Barcelona engaged in an attacking transition, it appears that several players were drawn forward, leaving gaps that Milan exploited upon regaining possession. The combination of ball in the box situations [BALL IN THE BOX] and set pieces [SET PIECES] indicates a lack of effective marking and organization during dead-ball scenarios. Coaches should emphasize the importance of maintaining shape during transitional phases and implementing stricter protocols for player positioning during set pieces."*
+
+Note how the LLM produces different explanations tailored to the specific event combination in each moment: Example 1 focuses on transition recovery speed, while Example 2 identifies set-piece marking as the primary issue.
 
 ### 6.4 Hallucination Mitigation
 
@@ -357,9 +395,31 @@ Based on the cross-match analysis, we recommend the coaching staff focus on:
 
 3. **Midfield progression control (Pattern 3, confidence 0.46):** When opponents successfully progress through midfield while Barcelona defends in the middle third, danger escalates. Strengthening the midfield press and ensuring defensive cover during transitions would reduce the frequency of this pattern.
 
-4. **Use the video linkage:** Every danger moment maps to a broadcast timestamp. Review footage alongside the LLM explanation for the richest analytical context.
+4. **Second-half resilience:** The Monaco match (0 critical → 5 critical in H2) and the overall data suggest second-half tactical adjustments by opponents can be devastating. Reviewing half-time tactical communication and in-game adaptability is recommended.
 
-5. **Monitor patterns in future matches:** All three detected patterns are at medium confidence. Track whether they appear in subsequent matches to determine if they represent structural issues or situational anomalies.
+5. **Use the video linkage:** Every danger moment maps to a broadcast timestamp. Review footage alongside the LLM explanation for the richest analytical context.
+
+6. **Monitor patterns in future matches:** All three detected patterns are at medium confidence. Track whether they appear in subsequent matches to determine if they represent structural issues or situational anomalies.
+
+---
+
+## 10. Suggestions for Metrica Nexus
+
+During development, we identified several data challenges that could be addressed in future versions of the Metrica platform:
+
+1. **Smart Tagging timeline offset tool:** Provide users with the option to offset Smart Tagging timestamps so they match in-game time. Users would input the 4 key offset times (match start, halftime start, halftime end, match end) to automatically align tags with the in-game timer.
+
+2. **Player ID merging:** Allow users to merge fragmented player IDs in the tracking data and connect them to known player names or external databases. This would unlock individual player analysis from broadcast tracking.
+
+3. **Player recognition confidence scores:** Include confidence values when correlating different player IDs to each other, enabling analysts to assess the reliability of player-level metrics derived from tracking data.
+
+---
+
+## 11. Conclusion
+
+This project demonstrates that meaningful tactical intelligence can be extracted from team-level Smart Tagging data alone, even without complete tracking data. The Defensive Fault Lines system transforms 11 matches of event annotations into a continuous risk timeline, detects 144 danger moments with 100% goal coverage, identifies 3 recurring vulnerability patterns with Bayesian confidence scoring, and produces LLM-assisted tactical explanations grounded in verifiable evidence.
+
+The key tactical finding is that transition play is Barcelona's primary vulnerability vector, appearing in nearly half of all danger moments and producing the highest-lift pattern in the dataset. The system provides an analytical foundation that coaching staff can use alongside their own observations, with every insight traceable to specific match moments, event codes, and broadcast timestamps.
 
 ---
 
