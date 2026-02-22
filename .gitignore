@@ -4,3 +4,10 @@ CLAUDE.md
 __pycache__/
 cache/
 venv/
+.env
+/outputs
+/parsed
+/matches_edited_xmls
+/Videos
+/Workspaces
+/FCB_Assets
