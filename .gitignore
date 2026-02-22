@@ -6,4 +6,5 @@ cache/
 venv/
 .env
 /outputs
+/outputs/llm_insights
 /parsed
